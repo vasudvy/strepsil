@@ -1,15 +1,13 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const moment = require('moment');
-const { supabase } = require('../utils/supabase');
-const { authenticateToken } = require('../middleware/auth');
-
 const router = express.Router();
 
-// Create new AI call record
-router.post('/', authenticateToken, async (req, res) => {
+// Create new AI call record (for external logging)
+router.post('/', async (req, res) => {
   try {
     const {
+      provider,
       model_type,
       endpoint,
       prompt,
@@ -19,47 +17,36 @@ router.post('/', authenticateToken, async (req, res) => {
       cost_per_token_in,
       cost_per_token_out,
       latency_ms,
-      status, // 'success', 'failure', 'retry', 'hallucination'
+      status = 'success',
       error_message,
       metadata
     } = req.body;
 
-    if (!model_type || !endpoint || !prompt) {
-      return res.status(400).json({ error: 'model_type, endpoint, and prompt are required' });
+    if (!provider || !model_type || !endpoint || !prompt) {
+      return res.status(400).json({ error: 'provider, model_type, endpoint, and prompt are required' });
     }
 
     const total_cost = (tokens_in * cost_per_token_in) + (tokens_out * cost_per_token_out);
     const callId = uuidv4();
 
-    const { data: aiCall, error } = await supabase
-      .from('ai_calls')
-      .insert([
-        {
-          id: callId,
-          user_id: req.user.id,
-          model_type,
-          endpoint,
-          prompt,
-          response,
-          tokens_in: tokens_in || 0,
-          tokens_out: tokens_out || 0,
-          cost_per_token_in: cost_per_token_in || 0,
-          cost_per_token_out: cost_per_token_out || 0,
-          total_cost,
-          latency_ms: latency_ms || 0,
-          status: status || 'success',
-          error_message,
-          metadata,
-          created_at: new Date().toISOString()
-        }
-      ])
-      .select()
-      .single();
-
-    if (error) {
-      console.error('AI call creation error:', error);
-      return res.status(500).json({ error: 'Failed to create AI call record' });
-    }
+    const db = req.app.locals.db;
+    const aiCall = await db.insertAiCall({
+      id: callId,
+      provider,
+      model_type,
+      endpoint,
+      prompt,
+      response,
+      tokens_in: tokens_in || 0,
+      tokens_out: tokens_out || 0,
+      cost_per_token_in: cost_per_token_in || 0,
+      cost_per_token_out: cost_per_token_out || 0,
+      total_cost,
+      latency_ms: latency_ms || 0,
+      status,
+      error_message,
+      metadata
+    });
 
     res.status(201).json({
       message: 'AI call recorded successfully',
@@ -72,13 +59,13 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // Get AI calls with filters and pagination
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const {
       page = 1,
       limit = 50,
+      provider,
       model_type,
-      endpoint,
       status,
       start_date,
       end_date,
@@ -87,38 +74,25 @@ router.get('/', authenticateToken, async (req, res) => {
     } = req.query;
 
     const offset = (page - 1) * limit;
+    const db = req.app.locals.db;
 
-    let query = supabase
-      .from('ai_calls')
-      .select('*', { count: 'exact' })
-      .eq('user_id', req.user.id);
+    const filters = {};
+    if (provider) filters.provider = provider;
+    if (model_type) filters.model_type = model_type;
+    if (status) filters.status = status;
+    if (start_date) filters.start_date = start_date;
+    if (end_date) filters.end_date = end_date;
 
-    // Apply filters
-    if (model_type) query = query.eq('model_type', model_type);
-    if (endpoint) query = query.eq('endpoint', endpoint);
-    if (status) query = query.eq('status', status);
-    if (start_date) query = query.gte('created_at', start_date);
-    if (end_date) query = query.lte('created_at', end_date);
-
-    // Apply sorting and pagination
-    query = query
-      .order(sort_by, { ascending: sort_order === 'asc' })
-      .range(offset, offset + limit - 1);
-
-    const { data: aiCalls, error, count } = await query;
-
-    if (error) {
-      console.error('AI calls fetch error:', error);
-      return res.status(500).json({ error: 'Failed to fetch AI calls' });
-    }
+    const aiCalls = await db.getAiCalls(filters, parseInt(limit), offset);
+    const total = await db.getAiCallsCount(filters);
 
     res.json({
       aiCalls,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: count,
-        pages: Math.ceil(count / limit)
+        total,
+        pages: Math.ceil(total / limit)
       }
     });
   } catch (error) {
@@ -128,22 +102,15 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // Get specific AI call by ID
-router.get('/:id', authenticateToken, async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const db = req.app.locals.db;
 
-    const { data: aiCall, error } = await supabase
-      .from('ai_calls')
-      .select('*')
-      .eq('id', id)
-      .eq('user_id', req.user.id)
-      .single();
+    const aiCall = await db.getAiCall(id);
 
-    if (error) {
-      if (error.code === 'PGRST116') {
-        return res.status(404).json({ error: 'AI call not found' });
-      }
-      return res.status(500).json({ error: 'Failed to fetch AI call' });
+    if (!aiCall) {
+      return res.status(404).json({ error: 'AI call not found' });
     }
 
     res.json({ aiCall });
@@ -154,48 +121,24 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 // Get AI call analytics
-router.get('/analytics/summary', authenticateToken, async (req, res) => {
+router.get('/analytics/summary', async (req, res) => {
   try {
-    const { start_date, end_date } = req.query;
+    const { start_date, end_date, provider, model_type } = req.query;
+    const db = req.app.locals.db;
 
-    let query = supabase
-      .from('ai_calls')
-      .select('*')
-      .eq('user_id', req.user.id);
+    const filters = {};
+    if (start_date) filters.start_date = start_date;
+    if (end_date) filters.end_date = end_date;
+    if (provider) filters.provider = provider;
+    if (model_type) filters.model_type = model_type;
 
-    if (start_date) query = query.gte('created_at', start_date);
-    if (end_date) query = query.lte('created_at', end_date);
+    const analytics = await db.getAnalytics(filters);
 
-    const { data: aiCalls, error } = await query;
-
-    if (error) {
-      return res.status(500).json({ error: 'Failed to fetch analytics' });
-    }
-
-    // Calculate analytics
-    const totalCalls = aiCalls.length;
-    const totalCost = aiCalls.reduce((sum, call) => sum + (call.total_cost || 0), 0);
-    const totalTokensIn = aiCalls.reduce((sum, call) => sum + (call.tokens_in || 0), 0);
-    const totalTokensOut = aiCalls.reduce((sum, call) => sum + (call.tokens_out || 0), 0);
-    const averageLatency = aiCalls.length > 0 
-      ? aiCalls.reduce((sum, call) => sum + (call.latency_ms || 0), 0) / aiCalls.length 
-      : 0;
-
-    // Status breakdown
-    const statusBreakdown = aiCalls.reduce((acc, call) => {
-      acc[call.status] = (acc[call.status] || 0) + 1;
-      return acc;
-    }, {});
-
-    // Model breakdown
-    const modelBreakdown = aiCalls.reduce((acc, call) => {
-      acc[call.model_type] = (acc[call.model_type] || 0) + 1;
-      return acc;
-    }, {});
-
-    // Daily usage (last 30 days)
+    // Add daily usage for the last 30 days
+    const calls = await db.getAiCalls(filters, 10000);
     const dailyUsage = {};
-    aiCalls.forEach(call => {
+    
+    calls.forEach(call => {
       const date = moment(call.created_at).format('YYYY-MM-DD');
       if (!dailyUsage[date]) {
         dailyUsage[date] = { calls: 0, cost: 0 };
@@ -205,17 +148,7 @@ router.get('/analytics/summary', authenticateToken, async (req, res) => {
     });
 
     res.json({
-      summary: {
-        totalCalls,
-        totalCost,
-        totalTokensIn,
-        totalTokensOut,
-        averageLatency: Math.round(averageLatency)
-      },
-      breakdowns: {
-        status: statusBreakdown,
-        models: modelBreakdown
-      },
+      ...analytics,
       dailyUsage
     });
   } catch (error) {
@@ -225,7 +158,7 @@ router.get('/analytics/summary', authenticateToken, async (req, res) => {
 });
 
 // Update AI call status (for retry/failure tracking)
-router.patch('/:id/status', authenticateToken, async (req, res) => {
+router.patch('/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
     const { status, error_message } = req.body;
@@ -234,23 +167,11 @@ router.patch('/:id/status', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    const { data: aiCall, error } = await supabase
-      .from('ai_calls')
-      .update({
-        status,
-        error_message,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .eq('user_id', req.user.id)
-      .select()
-      .single();
+    const db = req.app.locals.db;
+    const aiCall = await db.updateAiCall(id, { status, error_message });
 
-    if (error) {
-      if (error.code === 'PGRST116') {
-        return res.status(404).json({ error: 'AI call not found' });
-      }
-      return res.status(500).json({ error: 'Failed to update AI call' });
+    if (!aiCall) {
+      return res.status(404).json({ error: 'AI call not found' });
     }
 
     res.json({
@@ -264,24 +185,42 @@ router.patch('/:id/status', authenticateToken, async (req, res) => {
 });
 
 // Delete AI call
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const db = req.app.locals.db;
 
-    const { error } = await supabase
-      .from('ai_calls')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', req.user.id);
-
-    if (error) {
-      return res.status(500).json({ error: 'Failed to delete AI call' });
-    }
+    await db.deleteAiCall(id);
 
     res.json({ message: 'AI call deleted successfully' });
   } catch (error) {
     console.error('AI call deletion error:', error);
     res.status(500).json({ error: 'Failed to delete AI call' });
+  }
+});
+
+// Bulk operations
+router.post('/bulk/delete', async (req, res) => {
+  try {
+    const { ids } = req.body;
+    
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Valid array of IDs is required' });
+    }
+
+    const db = req.app.locals.db;
+    
+    for (const id of ids) {
+      await db.deleteAiCall(id);
+    }
+
+    res.json({ 
+      message: `${ids.length} AI calls deleted successfully`,
+      deletedCount: ids.length
+    });
+  } catch (error) {
+    console.error('Bulk delete error:', error);
+    res.status(500).json({ error: 'Failed to delete AI calls' });
   }
 });
 

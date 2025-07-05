@@ -8,7 +8,6 @@
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.8.1",
     "react-scripts": "5.0.1",
-    "@supabase/supabase-js": "^2.38.4",
     "axios": "^1.6.2",
     "chart.js": "^4.4.0",
     "react-chartjs-2": "^5.2.0",
@@ -17,9 +16,7 @@
     "lucide-react": "^0.294.0",
     "clsx": "^2.0.0",
     "tailwind-merge": "^2.0.0",
-    "react-hook-form": "^7.48.2",
-    "react-table": "^7.8.0",
-    "react-datepicker": "^4.25.0"
+    "react-hook-form": "^7.48.2"
   },
   "devDependencies": {
     "@types/react": "^18.2.37",

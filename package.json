@@ -1,19 +1,18 @@
 {
   "name": "strepsil",
   "version": "1.0.0",
-  "description": "AI Usage Tracking and Billing Dashboard",
-  "private": true,
-  "workspaces": [
-    "backend",
-    "frontend"
-  ],
+  "description": "Open-Source AI Usage Tracking and Receipt Dashboard",
+  "private": false,
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:backend": "npm run dev --workspace=backend",
-    "dev:frontend": "npm run dev --workspace=frontend",
-    "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
-    "start": "npm run start --workspace=backend"
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "start": "cd backend && npm start",
+    "setup": "node scripts/setup.js"
   },
+  "keywords": ["ai", "tracking", "receipts", "dashboard", "openai", "anthropic", "billing"],
+  "license": "MIT",
   "devDependencies": {
     "concurrently": "^8.2.2"
   }

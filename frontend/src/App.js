@@ -1,41 +1,20 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
-import Login from './pages/Login';
-import Register from './pages/Register';
+import SetupPage from './pages/SetupPage';
 import Dashboard from './pages/Dashboard';
 import AICallsPage from './pages/AICallsPage';
 import ReceiptDetailPage from './pages/ReceiptDetailPage';
 import CostExplorerPage from './pages/CostExplorerPage';
 import ReportsPage from './pages/ReportsPage';
 import SettingsPage from './pages/SettingsPage';
-import LoadingSpinner from './components/LoadingSpinner';
-
-const ProtectedRoute = ({ children }) => {
-  const { isAuthenticated, loading } = useAuth();
-  
-  if (loading) {
-    return <LoadingSpinner />;
-  }
-  
-  return isAuthenticated ? children : <Navigate to="/login" />;
-};
-
-const PublicRoute = ({ children }) => {
-  const { isAuthenticated, loading } = useAuth();
-  
-  if (loading) {
-    return <LoadingSpinner />;
-  }
-  
-  return !isAuthenticated ? children : <Navigate to="/dashboard" />;
-};
+import ChatPage from './pages/ChatPage';
+import { AppProvider } from './context/AppContext';
 
 function App() {
   return (
-    <AuthProvider>
+    <AppProvider>
       <Router>
         <div className="App">
           <Toaster
@@ -60,33 +39,12 @@ function App() {
           />
           
           <Routes>
-            <Route 
-              path="/login" 
-              element={
-                <PublicRoute>
-                  <Login />
-                </PublicRoute>
-              } 
-            />
-            <Route 
-              path="/register" 
-              element={
-                <PublicRoute>
-                  <Register />
-                </PublicRoute>
-              } 
-            />
+            <Route path="/setup" element={<SetupPage />} />
             
-            <Route 
-              path="/" 
-              element={
-                <ProtectedRoute>
-                  <Layout />
-                </ProtectedRoute>
-              }
-            >
+            <Route path="/" element={<Layout />}>
               <Route index element={<Navigate to="/dashboard" />} />
               <Route path="dashboard" element={<Dashboard />} />
+              <Route path="chat" element={<ChatPage />} />
               <Route path="ai-calls" element={<AICallsPage />} />
               <Route path="ai-calls/:id" element={<ReceiptDetailPage />} />
               <Route path="cost-explorer" element={<CostExplorerPage />} />
@@ -98,7 +56,7 @@ function App() {
           </Routes>
         </div>
       </Router>
-    </AuthProvider>
+    </AppProvider>
   );
 }
 

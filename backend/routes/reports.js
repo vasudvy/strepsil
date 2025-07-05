@@ -2,34 +2,25 @@ const express = require('express');
 const { Parser } = require('json2csv');
 const PDFDocument = require('pdfkit');
 const moment = require('moment');
-const { supabase } = require('../utils/supabase');
-const { authenticateToken } = require('../middleware/auth');
-
 const router = express.Router();
 
 // Get billing report data
-router.get('/billing', authenticateToken, async (req, res) => {
+router.get('/billing', async (req, res) => {
   try {
     const { start_date, end_date, format = 'json' } = req.query;
+    const db = req.app.locals.db;
 
-    let query = supabase
-      .from('ai_calls')
-      .select('*')
-      .eq('user_id', req.user.id);
+    const filters = {};
+    if (start_date) filters.start_date = start_date;
+    if (end_date) filters.end_date = end_date;
 
-    if (start_date) query = query.gte('created_at', start_date);
-    if (end_date) query = query.lte('created_at', end_date);
-
-    const { data: aiCalls, error } = await query;
-
-    if (error) {
-      return res.status(500).json({ error: 'Failed to fetch billing data' });
-    }
+    const aiCalls = await db.getAiCalls(filters, 10000); // Get all for report
 
     // Process data for report
     const reportData = aiCalls.map(call => ({
       id: call.id,
       date: moment(call.created_at).format('YYYY-MM-DD HH:mm:ss'),
+      provider: call.provider,
       model: call.model_type,
       endpoint: call.endpoint,
       tokens_in: call.tokens_in,
@@ -68,7 +59,7 @@ router.get('/billing', authenticateToken, async (req, res) => {
         doc.pipe(res);
         
         // PDF Header
-        doc.fontSize(20).text('Strepsil Billing Report', { align: 'center' });
+        doc.fontSize(20).text('Strepsil AI Usage Report', { align: 'center' });
         doc.fontSize(12).text(`Generated on: ${moment().format('YYYY-MM-DD HH:mm:ss')}`, { align: 'center' });
         doc.moveDown();
         
@@ -91,7 +82,7 @@ router.get('/billing', authenticateToken, async (req, res) => {
           if (index > 0 && index % 20 === 0) {
             doc.addPage();
           }
-          doc.text(`${call.date} | ${call.model} | ${call.endpoint} | $${call.cost.toFixed(4)} | ${call.status}`);
+          doc.text(`${call.date} | ${call.provider}/${call.model} | ${call.endpoint} | $${call.cost.toFixed(4)} | ${call.status}`);
         });
         
         doc.end();
@@ -110,23 +101,16 @@ router.get('/billing', authenticateToken, async (req, res) => {
 });
 
 // Get cost breakdown report
-router.get('/cost-breakdown', authenticateToken, async (req, res) => {
+router.get('/cost-breakdown', async (req, res) => {
   try {
     const { start_date, end_date, group_by = 'model' } = req.query;
+    const db = req.app.locals.db;
 
-    let query = supabase
-      .from('ai_calls')
-      .select('*')
-      .eq('user_id', req.user.id);
+    const filters = {};
+    if (start_date) filters.start_date = start_date;
+    if (end_date) filters.end_date = end_date;
 
-    if (start_date) query = query.gte('created_at', start_date);
-    if (end_date) query = query.lte('created_at', end_date);
-
-    const { data: aiCalls, error } = await query;
-
-    if (error) {
-      return res.status(500).json({ error: 'Failed to fetch cost breakdown' });
-    }
+    const aiCalls = await db.getAiCalls(filters, 10000);
 
     let breakdown = {};
 
@@ -134,6 +118,17 @@ router.get('/cost-breakdown', authenticateToken, async (req, res) => {
       case 'model':
         breakdown = aiCalls.reduce((acc, call) => {
           const key = call.model_type;
+          if (!acc[key]) acc[key] = { calls: 0, cost: 0, tokens: 0 };
+          acc[key].calls += 1;
+          acc[key].cost += call.total_cost || 0;
+          acc[key].tokens += (call.tokens_in || 0) + (call.tokens_out || 0);
+          return acc;
+        }, {});
+        break;
+
+      case 'provider':
+        breakdown = aiCalls.reduce((acc, call) => {
+          const key = call.provider;
           if (!acc[key]) acc[key] = { calls: 0, cost: 0, tokens: 0 };
           acc[key].calls += 1;
           acc[key].cost += call.total_cost || 0;
@@ -192,21 +187,18 @@ router.get('/cost-breakdown', authenticateToken, async (req, res) => {
 });
 
 // Get usage trends
-router.get('/trends', authenticateToken, async (req, res) => {
+router.get('/trends', async (req, res) => {
   try {
     const { period = 'daily', days = 30 } = req.query;
+    const db = req.app.locals.db;
 
     const startDate = moment().subtract(days, 'days').startOf('day');
     
-    const { data: aiCalls, error } = await supabase
-      .from('ai_calls')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .gte('created_at', startDate.toISOString());
+    const filters = {
+      start_date: startDate.toISOString()
+    };
 
-    if (error) {
-      return res.status(500).json({ error: 'Failed to fetch usage trends' });
-    }
+    const aiCalls = await db.getAiCalls(filters, 10000);
 
     const trends = {};
     const format = period === 'daily' ? 'YYYY-MM-DD' : 'YYYY-MM-DD HH:00';
