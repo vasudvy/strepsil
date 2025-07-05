@@ -55,7 +55,7 @@ Strepsil is a comprehensive API and dashboard for tracking AI model usage, costs
 ### 1. Clone and Setup
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/vasudvy/strepsil
 cd strepsil
 npm install
 ```
